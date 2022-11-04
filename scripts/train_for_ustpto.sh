@@ -10,7 +10,7 @@ python entry.py\
   --dropout 0.2 \
   --warmup_updates 2000 \
   --tot_updates 1000000 \
-  --dataset data/USPTO50K_aug \
+  --dataset data/USPTO50K \
   --known_rxn_type \
   --norm_first \
   --nhead 32 \
