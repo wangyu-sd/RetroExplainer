@@ -1033,7 +1033,7 @@ class RetroAGT(pl.LightningModule):
         parser.add_argument('--batch_second', default=False, action='store_true')
         parser.add_argument('--known_rxn_type', default=False, action='store_true')
         # parser.add_argument('--use_center', default=False, action='store_true')
-        parser.add_argument('--known_rxn_cnt', default=False, action='store_true')
+        parser.add_argument('--not_known_rxn_cnt', default=True, action='store_false')
         parser.add_argument('--norm_first', default=False, action='store_true')
         parser.add_argument('--activation', type=str, default='gelu')
         parser.add_argument("--warmup_updates", type=int, default=6000)
