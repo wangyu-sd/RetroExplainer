@@ -152,7 +152,7 @@ def build_model(args):
             dim_feedforward=args.dim_feedforward,
             dropout=args.dropout,
             max_ct_atom=args.max_ct_atom,
-            known_rxn_cnt=args.known_rxn_cnt,
+            known_rxn_cnt=not args.not_known_rxn_cnt,
             known_rxn_type=args.known_rxn_type,
             norm_first=args.norm_first,
             activation=args.activation,
