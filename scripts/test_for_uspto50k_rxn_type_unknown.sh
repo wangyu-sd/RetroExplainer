@@ -5,5 +5,5 @@ python entry.py\
   --cuda 0 \
   --name 'predict' \
   --test \
-  --dataset data/USPTO50K_aug \
+  --dataset data/USPTO50K \
   --model_path /mnt/solid/wy/retro2/tb_logs/retro1/version_481/checkpoints/epoch=509-step=39270.ckpt
