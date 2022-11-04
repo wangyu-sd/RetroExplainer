@@ -10,7 +10,7 @@ python entry.py\
   --dropout 0.2 \
   --warmup_updates 2000 \
   --tot_updates 1000000 \
-  --dataset data/USPTO50K_aug \
+  --dataset data/USPTO50K \
   --norm_first \
   --nhead 32 \
   --num_shared_layer 6 \
