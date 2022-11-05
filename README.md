@@ -1,4 +1,5 @@
 # MechRetro
+You can find our preprint in [here](https://www.researchgate.net/publication/364222773_MechRetro_is_a_chemical-mechanism-driven_graph_learning_framework_for_interpretable_retrosynthesis_prediction_and_pathway_planning)
 # Overview
 MechRetro is a chemical-mechanism-like graph learning framework via self-adaptive joint learning for interpretable retrosynthesis prediction and pathway planning
 ![image](framework.png)
