@@ -17,6 +17,22 @@ from data.data_utils import smile_to_mol_info, get_tgt_adj_order, padding_mol_in
 from data.LeavingGroup import LeavingGroup 
 
 
+class MultiStepDataset(data.Dataset):
+    def __init__(self, smiles, max_num_lg_atoms=70, max_num_atoms=100):
+        super().__init__()
+        self.raw_data = smiles
+        self.max_lg_node = max_num_lg_atoms
+        product = smile_to_mol_info(smiles)
+        padding_mol_info(product, max_num_atoms)
+        del product['mol']
+        self.data = [{"product": product, 'rxn_type': 0, 'center_cnt': 0, }]
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+    def __len__(self):
+        return len(self.data)
+
 class CacheDataset(data.Dataset):
     def __init__(self, root, data_split):
         super().__init__()
