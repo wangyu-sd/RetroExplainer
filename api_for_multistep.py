@@ -106,7 +106,8 @@ if __name__ == '__main__':
         iterations=500,
         expansion_topk=10,
         viz=True,
-        viz_dir='data/multi-step/viz'
+        viz_dir='data/multi-step/viz',
+        model_dump='model_saved/model_for_multi_step.ckpt'
     )
 
     # result = planner.plan('CCCC[C@@H](C(=O)N1CCC[C@H]1C(=O)O)[C@@H](F)C(=O)OC')
