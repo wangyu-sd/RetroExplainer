@@ -95,7 +95,7 @@ sh scripts/test_for_uspto50k_rxn_type_unknown.sh
 
 For multi-step predictions, you can click [here](https://drive.google.com/file/d/1HxDJKe5WyHFet-YOmWP3EpOwT_uAR3yr/view?usp=share_link) to get purchasable molecule set, and put it under the folder `/data/multi-step/retro_data/dataset/`. 
 
-We provide a more robust checkpoint trained on larger scale datasets, which takes about a week on three 3090 GPUs.  You can download the checkpoint [here](https://drive.google.com/file/d/10KbVCOIepgwLvUhCEOlKiwSigV5XyfVz/view?usp=share_link). And don't forget put it under the folder `model_saved`. Note that this version need a larger vocabulary of leaving groups, you can click [here](https://drive.google.com/file/d/1Cr5yfr4h3knewwGUnZB02TLRbGTd3nFC/view?usp=share_link) to get the vocabulary. And put the 'leaving_group.pt' under the folder 'data/multi-step/'.
+We provide a more robust checkpoint trained on larger scale datasets, which takes about a week on three 3090 GPUs.  You can download the checkpoint [here](https://drive.google.com/file/d/10KbVCOIepgwLvUhCEOlKiwSigV5XyfVz/view?usp=share_link). And don't forget put it under the folder `model_saved`. Note that this version need a larger vocabulary of leaving groups, you can click [here](https://drive.google.com/file/d/1Cr5yfr4h3knewwGUnZB02TLRbGTd3nFC/view?usp=share_link) to get the vocabulary. And put the `leaving_group.pt` under the folder `data/multi-step/`.
 
 You can get the reasoning process and their energy scores by modifying ` smi_list` in  `api_for_multisetp.py`:
 
