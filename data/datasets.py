@@ -250,7 +250,7 @@ class RetroAGTDataSet(Dataset):
                     if center_cnt not in leaving_group[lg_id].center_cnt:
                         leaving_group[lg_id].center_cnt.append(center_cnt)
 
-                product['bond_adj'] = build_multi_hop_adj(product['bond_adj'], n_hop=4)
+#                 product['bond_adj'] = build_multi_hop_adj(product['bond_adj'], n_hop=4)
                 # padding
                 padding_mol_info(product, self.max_node + self.max_regents_na)
                 rea_bond_adj = pad_adj(rea_bond_adj, self.max_node + self.max_regents_na)
