@@ -77,9 +77,15 @@ def construct_mol(atoms, adj, adj_prob=None, atom_h_prob=None, need_map=True, th
     Chem.SanitizeMol(mol)
     return mol
 
+def construct_reatacnt(product, lg, bond_adj, need_map=False):
+    n_pro, n_lg = product['n_atom'], lg.na
+    atoms = product['atom_fea'][0].clone()
+    atoms[n_pro:n_lg+n_pro] = lg.atom_fea[0]
+    reactant = construct_mol(atoms, bond_adj, adj_prob=None, need_map=need_map, bond_decoder=bond_decoder_lg)
+    return reactant
 
 def get_reaction(idx, batch, need_map=False):
-    atoms = batch['product']['atom_fea'][idx, 0]
+    atoms = batch['product']['atom_fea'][0, idx]
     bond_adj = bond_fea2type(batch['product']['bond_adj'][idx])
     # bond_adj = dataset[idx]['product']['bond_adj']
     product = construct_mol(atoms, bond_adj, adj_prob=None, need_map=need_map)
@@ -110,7 +116,47 @@ def check_valency(mol):
 
 def prepare_single_step_model(ckpt):
     # logging.info('Loading trained model from %s' % ckpt)
-    single_step_model = RetroAGT.load_from_checkpoint(ckpt, strict=True, leaving_group_path='data/multi-step/leaving_group.pt')
+    single_step_model = RetroAGT.load_from_checkpoint(ckpt, strict=True)
     single_step_model.eval()
     single_step_model.state = 'inference'
     return single_step_model
+
+
+
+
+class LossRecorder:
+    def __init__(self, max_sample=50, loss_init=None):
+        self.max_sample = max_sample
+        self.losses = []
+        self.cnt = 0
+        self.__mean = None
+
+        if loss_init is not None:
+            self.update(loss_init)
+
+    def update(self, loss):
+        self.losses.append(loss)
+        if len(self.losses) > self.max_sample:
+            self.losses.pop(0)
+        self.__mean = sum(self.losses) / len(self.losses)
+
+    def get_mean(self):
+        return self.__mean
+
+
+class LossRecorderList:
+    def __init__(self, loss_list=None, max_sample=50, recorder_size=None, device='cpu'):
+        if loss_list is not None:
+            self.loss_recorders = [LossRecorder(max_sample=max_sample, loss_init=loss) for loss in loss_list]
+        elif recorder_size is not None:
+            self.loss_recorders = [LossRecorder(max_sample=max_sample) for _ in range(recorder_size)]
+        else:
+            raise ValueError('Either loss_list or recorder_size should be provided.')
+        self.device = device
+
+    def update(self, loss_list):
+        for loss, loss_recoder in zip(loss_list, self.loss_recorders):
+            loss_recoder.update(loss)
+
+    def get_mean(self):
+        return torch.tensor([loss_recoder.get_mean() for loss_recoder in self.loss_recorders], device=self.device)
