@@ -28,6 +28,7 @@ import heapq
 import copy
 import re
 from rdkit import RDLogger
+
 RDLogger.DisableLog('rdApp.*')
 from data.datasets import MultiStepDataset
 from torch.utils.data import DataLoader
@@ -38,12 +39,11 @@ class RetroAGT(pl.LightningModule):
                  num_ct_layer=2, n_rxn_type=10, n_rxn_cnt=7, dim_feedforward=512, dropout=0.1, max_paths=200,
                  n_graph_type=6,
                  max_single_hop=4, max_ct_atom=4, use_contrastive=True, use_adaptive_multi_task=True,
-                 atom_dim=90, total_degree=10, formal_charge=8, hybrid=7, exp_valance=8, hydrogen=10, aromatic=2,
+                 atom_dim=90, total_degree=50, formal_charge=30, hybrid=10, exp_valance=20, hydrogen=20, aromatic=2,
                  ring=10, n_layers=1, batch_first=True, known_rxn_type=True, known_rxn_cnt=True, norm_first=False,
                  activation='gelu', warmup_updates=6e4, tot_updates=1e6, peak_lr=2e-4, end_lr=1e-9, weight_decay=0.99,
-                 leaving_group_path=None, use_3d_info=False, use_dist_adj=True, dataset_path=None):
+                 leaving_group_path=None, use_3d_info=False, use_dist_adj=True, dataset_path=None, batch_considered=200):
         super().__init__()
-        assert os.path.isfile(leaving_group_path)
         self.d_model = d_model
         self.nhead = nhead
         self.num_shared_layer = num_shared_layer
@@ -87,9 +87,11 @@ class RetroAGT(pl.LightningModule):
         self.leaving_group_path = leaving_group_path
         self.dataset_path = dataset_path
         self.dataset = None
+        assert os.path.isfile(leaving_group_path)
         self.lg = LeavingGroupList(torch.load(leaving_group_path), n_rxn_type, n_rxn_cnt)
         self.lg_size = len(self.lg)
         self.batch_size = None
+        self.batch_considered = batch_considered
 
         encoder_layer = RetroAGTEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation,
                                              batch_first=batch_first, norm_first=norm_first)
@@ -131,7 +133,7 @@ class RetroAGT(pl.LightningModule):
         self.lg_encoder = RetroAGTEncoder(encoder_layer, num_lg_layer, nn.LayerNorm(d_model))
         # print(num_shared_layer, num_lg_layer)
         self.lg_out_fn = nn.Sequential(
-            nn.Linear(d_model, self.lg_size),
+            nn.Linear(d_model, self.lg_size)
         )
 
         # encoder_layer = RetroAGTEncoderLayer(d_model * 2, nhead, dim_feedforward * 2, dropout, activation,
@@ -152,11 +154,17 @@ class RetroAGT(pl.LightningModule):
 
         self.state = None
 
-        self.loss_init = None
-        self.loss_last = None
-        self.loss_last2 = None
+        loss_init = torch.zeros(4, batch_considered)
+        loss_last = torch.zeros(4, batch_considered // 10)
+        loss_last2 = torch.zeros(4, batch_considered // 10)
+        cur_loss_step = torch.zeros(1, dtype=torch.long)
+        self.register_buffer('loss_init', loss_init)
+        self.register_buffer('loss_last', loss_last)
+        self.register_buffer('loss_last2', loss_last2)
+        self.register_buffer('cur_loss_step', cur_loss_step)
+
         self.max_lg_consider = 10
-        self.max_lg_node = 30
+        self.max_lg_node = 40
         self.max_gate_num = 4
 
         self.bond_decoder = {1: Chem.BondType.SINGLE,
@@ -183,6 +191,12 @@ class RetroAGT(pl.LightningModule):
         atom_fea, bond_adj, dist_adj, center_cnt, rxn_type, = pro_dic['atom_fea'], pro_dic['bond_adj'], \
                                                               pro_dic['dist_adj'], batch['center_cnt'], \
                                                               batch['rxn_type']
+        # print('atom_fea:', atom_fea.min(), atom_fea.max())
+        # print('bond_adj:', bond_adj.min(), bond_adj.max())
+        # print('dist_adj:', dist_adj.min(), dist_adj.max())
+        # print('center_cnt:', center_cnt.min(), center_cnt.max())
+        # print('rxn_type:', rxn_type.min(), rxn_type.max())
+
         if not self.known_rxn_cnt:
             center_cnt = torch.zeros_like(center_cnt)
         bsz, n_atom, _ = bond_adj.size()
@@ -219,7 +233,7 @@ class RetroAGT(pl.LightningModule):
             shared_atom_fea_lg2, masked_adj_lg2 = self.emb(lg_atom_fea, lg_bond_adj, lg_dist_adj,
                                                            center_cnt, rxn_type, dist3d_adj=None, contrast=True)
 
-            shared_atom_fea_lg2[:, 1:] += self.gate_embedding(gate_token)
+            shared_atom_fea_lg2[:, 1:] += self.gate_embedding(batch['gate_token'])
             ct_fea_lg2 = self.ct_encoder(shared_atom_fea_lg2, masked_adj_lg2)[:, 1:]
             # rc_fea = self.ct_encoder(shared_atom_fea, masked_adj)[:, 1:]
             ct_prob2 = self.ct_adj_fn(rc_fea[:, 1:], ct_fea_lg2)[:, :, :self.max_ct_atom]
@@ -234,6 +248,10 @@ class RetroAGT(pl.LightningModule):
             }
 
         lg_dic = batch['lg']
+        # print("lg_dic['atom_fea']", lg_dic['atom_fea'].min(), lg_dic['atom_fea'].max())
+        # print("lg_dic['bond_adj']", lg_dic['bond_adj'].min(), lg_dic['bond_adj'].max())
+        # print("lg_dic['dist_adj']", lg_dic['dist_adj'].min(), lg_dic['dist_adj'].max())
+
         if self.num_shared_layer > 0:
             shared_atom_fea_lg, masked_adj_lg = self.emb(lg_dic['atom_fea'], lg_dic['bond_adj'], lg_dic['dist_adj'],
                                                          center_cnt, rxn_type, dist3d_adj=None, contrast=True)
@@ -249,11 +267,12 @@ class RetroAGT(pl.LightningModule):
             lg_prob2 = self.lg_out_fn(lg_fea2)
         else:
             lg_prob2 = None
+            lg_fea2 = None
 
         ct_fea_lg = self.ct_encoder(shared_atom_fea_lg, masked_adj_lg)[:, 1:]
         # rc_fea = self.ct_encoder(shared_atom_fea, masked_adj)[:, 1:]
-        ct_prob = self.ct_adj_fn(rc_fea[:, 1:], ct_fea_lg, None)[:, :, :self.max_ct_atom]
-        ct_prob = self.ct_out_fn(ct_prob).squeeze() + torch.where(atom_fea[:, 0] > 0, 0., -1e3)[:, :, None]
+        ct_prob_fea = self.ct_adj_fn(rc_fea[:, 1:], ct_fea_lg, None)[:, :, :self.max_ct_atom]
+        ct_prob = self.ct_out_fn(ct_prob_fea).squeeze() + torch.where(atom_fea[:, 0] > 0, 0., -1e3)[:, :, None]
         # ct_prob += torch.bmm(self.rc_ct_fn(rc_adj_prob), ct_prob)
         if self.state == 'predict':
             bond_types = util.bond_fea2type(batch['product']['bond_adj'])
@@ -287,21 +306,28 @@ class RetroAGT(pl.LightningModule):
                 "atoms": batch['product']['atom_fea'][:, 0],
                 "bonds": bond_types,
                 "h_prob": h_prob,
+                "h_fea": h_fea,
                 "rxn_type": batch['rxn_type'],
                 "lg_id": batch['lg_id'],
                 # "lg_id_pred": self.greedy_search(lg_prob),
                 "rc_adj_prob": rc_adj_prob,
+                "rc_prob": rc_prob,
                 "lg_fea": lg_fea,
                 "lg_fea2": lg_fea2,
                 "lg_prob": lg_prob,
                 # "lg_prob2": lg_prob2,
-                "ct_prob_real": ct_prob,
+                "ct_prob_fea": ct_prob_fea,
+                "ct_prob": ct_prob,
                 "ct_prob_pred": ct_prob2,
             }
 
         return rc_adj_prob, lg_prob, lg_prob2, ct_prob, h_prob
 
     def calc_loss(self, batch, rc_adj_prob, lg_prob, lg_prob2, ct_prob, h_prob):
+        # print("batch['rc_target']", batch["rc_target"].max(), batch["rc_target"].min())
+        # print("batch['lg_id']", batch["lg_id"].max(), batch["lg_id"].min())
+        # print("batch['ct_target']", batch["ct_target"].max(), batch["ct_target"].min())
+        # print("batch['rc_h']", batch["rc_h"].max(), batch["rc_h"].min())
         bsz, n_atom, _ = rc_adj_prob.size()
         loss_rc = self.criterion_rc(rc_adj_prob.reshape(bsz * n_atom * n_atom),
                                     batch["rc_target"].reshape(bsz * n_atom * n_atom))
@@ -311,8 +337,7 @@ class RetroAGT(pl.LightningModule):
             loss_voc += self.criterion_lg(lg_prob2, batch['lg_id'])
             loss_voc /= 2
         loss_ct = self.criterion_ct(ct_prob, batch['ct_target'])
-        loss_h = self.criterion_h(h_prob.reshape(bsz * n_atom, -1), batch['rc_h'].reshape(bsz * n_atom).long())
-
+        loss_h = self.criterion_h(h_prob.reshape(bsz*n_atom, -1), batch['rc_h'].reshape(bsz*n_atom).long())
         return loss_rc, loss_voc, loss_ct, loss_h
 
     def calc_mt_loss(self, loss_list):
@@ -320,27 +345,38 @@ class RetroAGT(pl.LightningModule):
         if not self.use_adaptive_multi_task or self.num_shared_layer == 0:
             return loss_list.sum()
 
-        if self.loss_init is None:
+        if self.cur_loss_step == 0:
             if self.training:
-                self.loss_init = loss_list.detach()
-                self.loss_last2 = loss_list.detach()
-                loss_t = (loss_list / self.loss_init).mean()
+                self.loss_init[:, 0] = loss_list.detach()
+                self.loss_last2[:, 0] = loss_list.detach()
+                self.cur_loss_step += 1
+                loss_t = (loss_list / self.loss_init[:, 0]).mean()
             else:
                 loss_t = (loss_list / loss_list.detach()).mean()
 
-        elif self.loss_last is None:
+        elif self.cur_loss_step == 1:
             if self.training:
-                self.loss_last = loss_list.detach()
-                loss_t = (loss_list / self.loss_init).mean()
+                self.loss_last[:, 0] = loss_list.detach()
+                self.loss_init[:, 1] = loss_list.detach()
+                self.cur_loss_step += 1
+                loss_t = (loss_list / self.loss_init[:, :2].mean(dim=-1)).mean()
             else:
                 loss_t = (loss_list / loss_list.detach()).mean()
         else:
-            w = F.softmax(self.loss_last / self.loss_last2, dim=-1).detach()
-            loss_t = (loss_list / self.loss_init * w).sum()
+            cur_loss_init = self.loss_init[:, :self.cur_loss_step].mean(dim=-1)
+            cur_loss_last = self.loss_last[:, :self.cur_loss_step - 1].mean(dim=-1)
+            cur_loss_last2 = self.loss_last2[:, :self.cur_loss_step - 1].mean(dim=-1)
+            w = F.softmax(cur_loss_last / cur_loss_last2, dim=-1).detach()
+            loss_t = (loss_list / cur_loss_init * w).sum()
 
             if self.training:
-                self.loss_last2 = self.loss_last
-                self.loss_last = loss_list.detach()
+                cur_init_idx = self.cur_loss_step.item() % self.batch_considered
+                self.loss_init[:, cur_init_idx] = loss_list.detach()
+
+                cur_loss_last2_step = (self.cur_loss_step.item() - 1) % (self.batch_considered // 10)
+                self.loss_last2[:, cur_loss_last2_step] = self.loss_last[:, cur_loss_last2_step - 1]
+                self.loss_last[:, cur_loss_last2_step] = loss_list.detach()
+                self.cur_loss_step += 1
         return loss_t
 
     def training_step(self, batch, batch_idx):
@@ -367,6 +403,7 @@ class RetroAGT(pl.LightningModule):
         self.log("loss_ct", loss_ct, prog_bar=False, logger=True)
         self.log("loss_t", loss_t, prog_bar=True, logger=True)
 
+        self.save_hyperparameters()
         return loss_t
 
     def validation_step(self, batch, batch_idx):
@@ -399,123 +436,24 @@ class RetroAGT(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         self.state = 'test'
         rc_adj_prob, lg_prob, lg_prob2, ct_prob, h_prob = self.forward(batch)
-        all_acc, rc_acc, lg_acc, ct_acc, h_acc = \
+        all_acc, rc_acc, lg_acc, ct_acc, h_acc, rxn_type_acc = \
             self.calc_beam_search_accuracy(batch, rc_adj_prob, lg_prob, ct_prob, h_prob)
         test_output = {}
 
         for k in [1, 3, 5, 10]:
             test_output[f"all_top{k}_beam_acc"] = all_acc[f"all_top{k}_acc"]
-            test_output[f"lg_top{k}_beam_acc"] = lg_acc[f"lg_top{k}_acc"]
-            test_output[f"rc_top{k}_beam_acc"] = rc_acc[f"rc_top{k}_acc"]
-            test_output[f"all_top{k}_acc"] = 0
+            # test_output[f"lg_top{k}_beam_acc"] = lg_acc[f"lg_top{k}_acc"]
+            # test_output[f"rc_top{k}_beam_acc"] = rc_acc[f"rc_top{k}_acc"]
+            # test_output[f"all_top{k}_acc"] = 0
 
+        if rxn_type_acc is not None:
+            for i in range(10):
+                for k in [1, 3, 5, 10]:
+                    if rxn_type_acc[f"rxn_type{i}_top{k}_acc"] is not None:
+                        test_output[f"rxn_type{i}_top{k}_beam_acc"] = rxn_type_acc[f"rxn_type{i}_top{k}_acc"]
         test_output['ct_acc'] = ct_acc
         test_output['h_acc'] = h_acc
-
-        if self.dataset is None:
-            self.dataset = pd.read_csv(os.path.join(self.dataset_path, "processed/test/smiles_lists.csv"))
-
-        pro_dic = batch['product']
-        atom_fea, bond_adj, dist_adj, center_cnt, rxn_type, = pro_dic['atom_fea'], pro_dic['bond_adj'], \
-                                                              pro_dic['dist_adj'], batch['center_cnt'], \
-                                                              batch['rxn_type']
-        dist_adj_3d = pro_dic['dist_adj_3d'] if self.use_3d_info else None
-        if not self.known_rxn_cnt:
-            center_cnt = torch.zeros_like(center_cnt)
-        bsz, n_atom, _ = bond_adj.size()
-        bsz, na_fea_type, _ = pro_dic['atom_fea'].size()
-        if self.batch_size is None:
-            self.batch_size = bsz
-
-        if self.num_shared_layer > 0:
-            shared_atom_fea, masked_adj = self.emb(atom_fea, bond_adj, dist_adj, center_cnt, rxn_type, dist_adj_3d)
-            shared_atom_fea = self.shared_encoder(shared_atom_fea, masked_adj)
-            # rc_fea = self.rc_encoder(shared_atom_fea, masked_adj)
-            rc_fea = shared_atom_fea
-        else:
-            shared_atom_fea, masked_adj = self.emb[0](atom_fea, bond_adj, dist_adj, center_cnt, rxn_type, dist_adj_3d)
-            rc_fea = self.rc_encoder(shared_atom_fea, masked_adj)
-
-        device = batch['rxn_type'].device
-
-        bsz, n_atom, _ = batch['product']['bond_adj'].size()
-        bsz, na_fea_type, _ = batch['product']['atom_fea'].size()
-
-        ct_probs = torch.zeros(self.max_lg_consider, bsz, n_atom, self.max_gate_num, device=device)
-        lg_prob_sorted, lg_prob_indices = lg_prob.softmax(dim=-1).sort(dim=-1, descending=True)
-
-        bond_type_adj = util.bond_fea2type(bond_adj)
-        for kk in range(self.max_lg_consider):
-            cur_lg_id = lg_prob_indices[:, kk]
-
-            lg_atom_fea, lg_bond_adj, lg_dist_adj = torch.zeros(bsz, na_fea_type, self.max_lg_node, device=device), \
-                                                    torch.zeros(bsz, self.max_lg_node, self.max_lg_node, device=device), \
-                                                    torch.zeros(bsz, self.max_lg_node, self.max_lg_node, device=device)
-            gate_token = torch.zeros(bsz, self.max_lg_node, dtype=torch.int, device=device)
-            for idx in range(bsz):
-                cur_lg = self.lg[cur_lg_id[idx]]
-                cur_na = int(cur_lg.na)
-                lg_atom_fea[idx, :, :cur_na] = cur_lg.atom_fea
-                lg_bond_adj[idx, :cur_na, :cur_na] = cur_lg.bond_adj
-                lg_dist_adj[idx, :cur_na, :cur_na] = cur_lg.dist_adj
-                for gi, gn in enumerate(cur_lg.gate_num):
-                    gate_token[idx, gi] = gn
-
-            shared_atom_fea_lg2, masked_adj_lg2 = self.emb(lg_atom_fea, lg_bond_adj, lg_dist_adj,
-                                                           center_cnt, rxn_type, dist3d_adj=None, contrast=True)
-            # print(shared_atom_fea_lg2.device)
-            shared_atom_fea_lg2[:, 1:] += self.gate_embedding(gate_token)
-            ct_fea_lg2 = self.ct_encoder(shared_atom_fea_lg2, masked_adj_lg2)[:, 1:]
-            # rc_fea = self.ct_encoder(shared_atom_fea, masked_adj)[:, 1:]
-            ct_prob2 = self.ct_adj_fn(rc_fea[:, 1:], ct_fea_lg2)[:, :, :self.max_ct_atom]
-            ct_prob2 = self.ct_out_fn(ct_prob2).squeeze() + torch.where(atom_fea[:, 0] > 0, 0., -1e3)[:, :, None]
-            ct_probs[kk] = ct_prob2.sigmoid()
-
-        n_pros = batch['product']['n_atom']
-        rc_adj_prob = rc_adj_prob.sigmoid()
-        h_prob = h_prob.softmax(dim=-1)
-
-        cur_bsz = bsz
-        for i in range(bsz):
-            n_pro = n_pros[i]
-            if center_cnt[i] > 10:
-                cur_bsz -= 1
-                continue
-            global_idx = self.batch_size * batch_idx + i
-            # print(global_idx)
-            reactant_smi, product_smi = self.dataset.iloc[global_idx, 0], self.dataset.iloc[global_idx, 1]
-            product = Chem.MolFromSmiles(product_smi)
-            product_smi = Chem.MolToSmiles(product)
-            reactant_smi = Chem.MolToSmiles(Chem.MolFromSmiles(reactant_smi))
-            assert product.GetNumAtoms() == n_pro
-            solutions, error_mol = self.find_solutions(product=Chem.RWMol(product),
-                                                       rc_adj_prob_normed=rc_adj_prob[i, :n_pro, :n_pro],
-                                                       h_prob_normed=h_prob[i, :n_pro],
-                                                       bond_type_adj=bond_type_adj[i, :n_pro, :n_pro],
-                                                       ct_probs=ct_probs[:, i, :n_pro, :self.max_gate_num],
-                                                       lg_prob_sorted=lg_prob_sorted[i],
-                                                       lg_prob_indices=lg_prob_indices[i],
-                                                       n_pro=int(n_pro),
-                                                       device=device
-                                                       )
-            # print(global_idx, len(solutions), len(error_mol))
-            if len(solutions) < 10:
-                print(global_idx)
-                cur_bsz -= 1
-                continue
-            for k in range(min(len(solutions), 10)):
-                # cur_smiles = Chem.MolToSmiles(solutions[k][0])
-                cur_smiles = solutions[k][0]
-                # print(solutions[k][1], solutions[k][2])
-                if cur_smiles == product_smi:
-                    continue
-                if cur_smiles == reactant_smi:
-                    for kk in [1, 3, 5, 10]:
-                        if k <= kk:
-                            test_output[f"all_top{kk}_acc"] += 1
-                    break
-            for kk in [1, 3, 5, 10]:
-                test_output[f"all_top{kk}_acc"] /= cur_bsz
+        
         return test_output
 
     def test_epoch_end(self, outputs):
@@ -554,6 +492,7 @@ class RetroAGT(pl.LightningModule):
 
         rc_score_init = rc_adj_prob_normed
         rc_score_init = -(1 - rc_score_init).log().sum()
+        h_prob_normed_loged = h_prob_normed[:n_pro].log()
         # product, reactant = get_reaction(pred_idx)
         # product = correct_charge(product)
         # print("rc_score_init:%.2f" % rc_score_init)
@@ -561,7 +500,8 @@ class RetroAGT(pl.LightningModule):
             origin_numhs.append(atom.GetTotalNumHs())
 
         num_lg_consider = ct_probs.size(0)
-        for kk in range(start_k, start_k+num_lg_consider):
+        from tqdm import tqdm
+        for kk in tqdm(range(start_k, start_k + num_lg_consider)):
             base_score = rc_score_init.clone()
             cur_lg = self.lg[lg_prob_indices[kk]]
             cur_pro = copy.deepcopy(product)
@@ -570,54 +510,56 @@ class RetroAGT(pl.LightningModule):
 
             # build leaving_group
             for lg_atom_idx in range(cur_lg.na):
-                cur_lg_atom = Chem.Atom(int(cur_lg.atom_fea[0, lg_atom_idx]))
-                if int(cur_lg.atom_fea[0, lg_atom_idx]) == 7 and cur_lg.atom_fea[1, lg_atom_idx] == 4 and \
-                        cur_lg.atom_fea[2, lg_atom_idx] == 4:
-                    cur_lg_atom.SetFormalCharge(1)
+                # print(cur_lg.atom_fea[0, lg_atom_idx].item())
+                cur_lg_atom = Chem.Atom(cur_lg.atom_fea[0, lg_atom_idx].int().item())
+                cur_lg_atom.SetFormalCharge(cur_lg.atom_fea[6, lg_atom_idx].int().item() - 10)
+                # cur_lg_atom.SetTotalNumHs(cur_lg.atom_fea[3, lg_atom_idx].item() - 1)
                 cur_pro.AddAtom(cur_lg_atom)
                 for lg_atom_idx_j in range(lg_atom_idx):
                     if cur_lg_adj[lg_atom_idx, lg_atom_idx_j] > 0:
                         cur_pro.AddBond(lg_atom_idx + n_pro, lg_atom_idx_j + n_pro,
                                         self.bond_decoder[float(cur_lg_adj[lg_atom_idx, lg_atom_idx_j])])
 
-            flag, atomid_valence = util.check_valency(cur_pro)
-            if not flag:
-                assert len(atomid_valence) == 2
-                idx = atomid_valence[0]
-                v = atomid_valence[1]
-                an = cur_pro.GetAtomWithIdx(idx).GetAtomicNum()
-                if an in (7, 8, 16) and (v - util.ATOM_VALENCY[an]) == 1:
-                    cur_pro.GetAtomWithIdx(idx).SetFormalCharge(1)
+            # flag, atomid_valence = util.check_valency(cur_pro)
+            # if not flag:
+            #     assert len(atomid_valence) == 2
+            #     idx = atomid_valence[0]
+            #     v = atomid_valence[1]
+            #     an = cur_pro.GetAtomWithIdx(idx).GetAtomicNum()
+            #     if an in (7, 8, 16) and (v - util.ATOM_VALENCY[an]) == 1:
+            #         cur_pro.GetAtomWithIdx(idx).SetFormalCharge(1)
 
             base_score += -lg_prob_sorted[kk].log()
-            base_score += -(1 - ct_probs[kk-start_k]).log().sum()
-            actions = [f"Select Leaving Group with Index {lg_prob_indices[kk]} and Cost %.2f"
+            base_score += -(1 - ct_probs[kk - start_k] + 1e-30).log().sum()
+            base_score += -(h_prob_normed_loged[:, h_center_idx].sum())
+            actions = [f"LGM|Select Leaving Group with Index {lg_prob_indices[kk]} and Energy %.2f"
                        % -lg_prob_sorted[kk].log()]
-            actions += [f"Initial Cost:%.2f" % base_score]
+            actions += [f"IT|Initial Energy:%.2f" % base_score]
 
             # media_mols = [copy.deepcopy(cur_pro)]
 
             #     cur_pro
+
             def dfs_for_ct(lg_atom_idx, pro_atom_idx, cur_gate_num, cur_score, depth=0):
                 if lg_atom_idx >= len(cur_lg.gate_num):
                     dfs_for_rc(0, 0, cur_pro, cur_score)
                     return
                 for atom_idx in range(pro_atom_idx, n_pro):
-                    if ct_probs[kk-start_k, atom_idx, lg_atom_idx] > ct_threshold:
-                        cur_ct_prob = ct_probs[kk-start_k, atom_idx, lg_atom_idx]
+                    if ct_probs[kk - start_k, atom_idx, lg_atom_idx] > ct_threshold:
+                        cur_ct_prob = ct_probs[kk - start_k, atom_idx, lg_atom_idx]
                         cur_gate_num += 1
                         if cur_gate_num <= cur_lg.gate_num[lg_atom_idx]:
-                            dert_score = -cur_ct_prob.log() + (1 - cur_ct_prob).log()
+                            dert_score = -(cur_ct_prob + 1e-30).log() + (1 - cur_ct_prob + 1e-30).log()
                             cur_bridge_idx = sum(cur_lg.gate_num[:lg_atom_idx]) + cur_gate_num - 1
                             try:
                                 cur_pro.AddBond(atom_idx, lg_atom_idx + n_pro,
                                                 self.bond_decoder[cur_lg.bridge[0][cur_bridge_idx][1]])
                                 actions.append(
-                                    f"Add Bonds: between {atom_idx} and {lg_atom_idx + n_pro} with Bond Type "
+                                    f"RCP|Add Bonds: between {atom_idx} and {lg_atom_idx + n_pro} with Bond Type "
                                     f"{cur_lg.bridge[0][cur_bridge_idx][1]} and Cost %.2f" % dert_score)
                                 # media_mols.append(copy.deepcopy(cur_pro))
                             except Exception as e:
-                                error_mol.append((copy.deepcopy(cur_pro), "ct_error", kk, e))
+                                # error_mol.append((copy.deepcopy(cur_pro), "ct_error", kk, e))
                                 return
                             degree_change[atom_idx] += cur_lg.bridge[0][cur_bridge_idx][1]
                             # print("cur_score1: %.2f\t%.2f\tlg_atom_idx:%d\tpro_atom_idx:%d\tatom_idx:%d\tdepth:%d"
@@ -638,7 +580,7 @@ class RetroAGT(pl.LightningModule):
             def dfs_for_rc(start_row_idx, start_col_idx, mol, cur_score, depth=0):
                 # print(lg_prob_indices[kk], depth, 'rc')
                 # print("rc", depth, start_row_idx, start_col_idx)
-                if depth > 3:
+                if depth > (rc_adj_prob_normed.sum() // 2):
                     return
                 if start_col_idx >= n_pro:
                     start_col_idx = 0
@@ -650,6 +592,12 @@ class RetroAGT(pl.LightningModule):
                     if atom_idx >= n_pro:
                         continue
                     if origin_numhs[atom_idx] < degree_change[atom_idx]:
+                        formal_charge = int(degree_change[atom_idx] - origin_numhs[atom_idx])
+                        if formal_charge < 2 and atom.GetAtomicNum() == 7:
+                            atom.SetFormalCharge(formal_charge)
+                        else:
+                            break
+                    if origin_numhs[atom_idx] < degree_change[atom_idx]:
                         break
                     else:
                         atom.SetNumExplicitHs(int(origin_numhs[atom_idx] - degree_change[atom_idx]))
@@ -657,39 +605,44 @@ class RetroAGT(pl.LightningModule):
                     try:
                         for atom in cur_mol.GetAtoms():
                             if atom.GetIsAromatic() and not atom.IsInRing():
-                                atom.SetAromatic(False)
+                                atom.SetIsAromatic(False)
                         Chem.SanitizeMol(cur_mol)
                         flag = True
                     except Exception as e:
-                        error_mol.append((copy.deepcopy(cur_mol), "rc_error", kk, e))
+                        pass
+                        # error_mol.append((copy.deepcopy(cur_mol), "rc_error", kk, e))
 
                 if flag and len(actions) > 2:
                     dert_score = 0
                     cur_action = copy.deepcopy(actions)
                     for atom_idx, atom in enumerate(cur_mol.GetAtoms()):
-                        if atom_idx >= n_pro:
-                            continue
-                        dert_h_num = atom.GetTotalNumHs() - origin_numhs[atom_idx]
-                        if dert_h_num != 0 and -h_center_idx <= dert_h_num <= h_center_idx:
-                            cur_dert_score = -h_prob_normed[atom_idx, dert_h_num + h_center_idx].log()
-                            dert_score += cur_dert_score
-                            cur_action.append(
-                                f"H number change {dert_h_num} cost of atom {atom_idx + 1}: %.2f" % cur_dert_score)
+                        if atom_idx < n_pro:
+                            dert_h_num = atom.GetTotalNumHs() - origin_numhs[atom_idx]
+                            if dert_h_num != 0:
+                                if -3 <= dert_h_num <= 3:
+                                    cur_dert_score = -h_prob_normed_loged[atom_idx, dert_h_num + h_center_idx] + (
+                                    h_prob_normed_loged[atom_idx, h_center_idx])
+                                else:
+                                    cur_dert_score = 1000
+                                dert_score += cur_dert_score
+                                cur_action.append(
+                                    f"H number change {dert_h_num} cost of atom {atom_idx + 1}: %.2f" % cur_dert_score)
                     # media_mols.append(cur_mol)
                     smiles = Chem.MolToSmiles(cur_mol)
-                    solutions.append((smiles, float(cur_score + dert_score), cur_action, []))
+                    if smiles is not None and Chem.MolFromSmiles(smiles) is not None:
+                        solutions.append((smiles, float(cur_score + dert_score), cur_action, []))
+                    print(solutions)
 
                 for row_idx in range(start_row_idx, n_pro):
                     for col_idx in range(start_col_idx, n_pro):
                         if row_idx >= col_idx or rc_adj_prob_normed[row_idx, col_idx] < rc_threshold:
                             continue
 
-                        for changed_bond in [0, 1, 1.5, 2, 3]:
-                            degree_change[row_idx] += changed_bond - bond_type_adj[row_idx, col_idx]
-                            degree_change[col_idx] += changed_bond - bond_type_adj[row_idx, col_idx]
-
-                            dert_score = 0
+                        for changed_bond in [0, 1, 2, 3]:
                             if changed_bond != bond_type_adj[row_idx, col_idx]:
+                                dert_score = 0
+                                degree_change[row_idx] += changed_bond - bond_type_adj[row_idx, col_idx]
+                                degree_change[col_idx] += changed_bond - bond_type_adj[row_idx, col_idx]
                                 cur_mol = copy.deepcopy(mol)
                                 cur_mol.RemoveBond(row_idx, col_idx)
                                 dert_score += -rc_adj_prob_normed[row_idx, col_idx].log() + (
@@ -697,7 +650,7 @@ class RetroAGT(pl.LightningModule):
                                 if changed_bond != 0:
                                     cur_mol.AddBond(row_idx, col_idx, self.bond_decoder[changed_bond])
                                     actions.append(f"Replace Bonds: between {row_idx} and {col_idx}, " +
-                                                   f"from Bond Type {bond_type_adj[row_idx, col_idx]} to Bond Type"
+                                                   f"from Bond Type {int(bond_type_adj[row_idx, col_idx])} to Bond Type"
                                                    f"{changed_bond} with Cost %.2f" % dert_score)
                                 else:
                                     actions.append(
@@ -713,12 +666,24 @@ class RetroAGT(pl.LightningModule):
 
             dfs_for_ct(0, 0, 0, base_score)
         solutions.sort(key=lambda x: x[1])
-        return solutions, error_mol
+        return solutions, []
 
     def run(self, smi, topk=10, max_num_atoms=150, max_num_lg_atoms=70, max_gate_num=10):
 
-        # print("Query smiles:", smi)
-        cur_smi = MultiStepDataset(smi, max_num_atoms=max_num_atoms, max_num_lg_atoms=max_num_lg_atoms)
+        # try:
+        #     cur_smi = MultiStepDataset(smi, max_num_atoms=max_num_atoms, max_num_lg_atoms=max_num_lg_atoms)
+        # except Exception as e:
+        #     print(e)
+        #     return {
+        #     'reactants': [],
+        #     'scores': [],
+        #     'template': []
+        # }
+        try:
+            cur_smi = MultiStepDataset(smi, max_num_atoms=max_num_atoms, max_num_lg_atoms=max_num_lg_atoms)
+        except Exception as e:
+            print(smi, e)
+            return None
         cur_smi = DataLoader(cur_smi, batch_size=1)
         batch = next(iter(cur_smi))
 
@@ -745,7 +710,8 @@ class RetroAGT(pl.LightningModule):
                 # rc_fea = self.rc_encoder(shared_atom_fea, masked_adj)
                 rc_fea = shared_atom_fea
             else:
-                shared_atom_fea, masked_adj = self.emb[0](atom_fea, bond_adj, dist_adj, center_cnt, rxn_type, dist_adj_3d)
+                shared_atom_fea, masked_adj = self.emb[0](atom_fea, bond_adj, dist_adj, center_cnt, rxn_type,
+                                                          dist_adj_3d)
                 rc_fea = self.rc_encoder(shared_atom_fea, masked_adj)
 
             rc_prob = self.rc_adj_fn(rc_fea[:, 1:], rc_fea[:, 1:], None)
@@ -757,7 +723,8 @@ class RetroAGT(pl.LightningModule):
             h_prob[:, :, 4:] += h_mask[:, :, None]
 
             if self.num_shared_layer == 0:
-                shared_atom_fea, masked_adj = self.emb[2](atom_fea, bond_adj, dist_adj, center_cnt, rxn_type, dist_adj_3d)
+                shared_atom_fea, masked_adj = self.emb[2](atom_fea, bond_adj, dist_adj, center_cnt, rxn_type,
+                                                          dist_adj_3d)
             lg_fea = self.lg_encoder(shared_atom_fea, masked_adj)[:, 0]
             lg_prob = self.lg_out_fn(lg_fea)
             rc_adj_prob = rc_adj_prob.sigmoid()
@@ -772,7 +739,7 @@ class RetroAGT(pl.LightningModule):
         solutions, sol_size = [], 0
         # from tqdm import tqdm
         for kk in range(topk * 10):
-        # for kk in tqdm(range(topk * 10)):
+            # for kk in tqdm(range(topk * 10)):
             cur_lg_id = lg_prob_indices[:, kk]
 
             lg_atom_fea, lg_bond_adj, lg_dist_adj = torch.zeros(bsz, na_fea_type, self.max_lg_node, device=device), \
@@ -798,8 +765,7 @@ class RetroAGT(pl.LightningModule):
             ct_prob2 = self.ct_out_fn(ct_prob2).squeeze() + torch.where(atom_fea[:, 0] > 0, 0., -1e3)[:, :, None]
             ct_prob2 = ct_prob2.sigmoid()
 
-
-            i=0
+            i = 0
             cur_sols, error_mol = self.find_solutions(product=Chem.RWMol(Chem.MolFromSmiles(smi)),
                                                       rc_adj_prob_normed=rc_adj_prob[i, :n_pro, :n_pro],
                                                       h_prob_normed=h_prob[i, :n_pro],
@@ -846,6 +812,7 @@ class RetroAGT(pl.LightningModule):
         rc_prob = torch.sigmoid(rc_prob)
         # rc_h_prob = self.greedy_search(rc_h_prob)
         h_pred = self.greedy_search(h_prob)
+        # h_pred = h_prob.round()
         bsz = rxn_cnt.size(0)
         if self.known_rxn_type:
             for idx in range(bsz):
@@ -869,12 +836,12 @@ class RetroAGT(pl.LightningModule):
                 cur_mix_pred = []
                 for i in range(10):
                     for j in range(10):
-                        cur_mix_pred.append((lg_pred[idx][i][0] + rc_pred[idx][j][0] * 10,
-                                             lg_pred[idx][i][1] and rc_pred[idx][j][1]))
+                        cur_mix_pred.append([lg_pred[idx][i][0] + rc_pred[idx][j][0],
+                                             lg_pred[idx][i][1] and rc_pred[idx][j][1]])
                         if lg_pred[idx][i][1] and rc_pred[idx][j][1]:
                             break
                 cur_mix_pred = sorted(cur_mix_pred, key=lambda x: x[0], reverse=True)
-                ks = [101, 101, 101]
+                ks = [11, 11, 101]
                 k_list = [10, 10, 100]
                 for i, candidate in enumerate([lg_pred[idx], rc_pred[idx], cur_mix_pred]):
                     for k in range(k_list[i]):
@@ -882,22 +849,21 @@ class RetroAGT(pl.LightningModule):
                             ks[i] = k + 1
                             break
                 lg_pred[idx], rc_pred[idx] = ks[0], ks[1]
-                mix_pred.append(ks[2])
-                # print(ks[0], ks[1], ks[2])
+                mix_pred.append(ks[0] * ks[1])
             return rc_pred, lg_pred, mix_pred, rc_prob, h_pred
 
     def find_lg_topk(self, cur_prob, k=10, lg_truth=None):
         values, indexes = torch.topk(cur_prob, k=k)
-        values = F.softmax(values, dim=-1)
+        values = - torch.arange(0, k, dtype=torch.float32, device=cur_prob.device)
         values = values.tolist()
         is_lg = torch.eq(indexes, lg_truth)
         return [(values[idx], bool(is_lg[idx])) for idx in range(k)]
 
     def find_rc_topk(self, cur_prob, k=10, rxn_cnt=None, n_pro=None, rc=None):
         if rxn_cnt == 0:
-            return [(1., True)] + [(0., False) for _ in range(k - 1)]
+            return [(1., True)] + [(-1000., False) for _ in range(k - 1)]
         rc_truth = rc.nonzero()
-        rc_truth = [int(r[0] * n_pro + r[1]) for r in rc_truth if r[0] < r[1]]
+        rc_truth = set([int(r[0] * n_pro + r[1]) for r in rc_truth if r[0] < r[1]])
         topk_size = max(k, int(rxn_cnt))
         values, indexes = torch.topk(cur_prob.view(n_pro * n_pro), k=topk_size)
         values, indexes = values.tolist(), indexes.tolist()
@@ -907,11 +873,14 @@ class RetroAGT(pl.LightningModule):
         stack = []
         heapq.heappush(stack, (-value, comb))
         res, kk = [], 0
+
         while stack:
             value, comb = heapq.heappop(stack)
             value = -value
-            is_rc = bool([indexes[com] for com in comb] == rc_truth)
-            res.append((value, is_rc))
+            # print([indexes[com] for com in comb], rc_truth, value)
+            cur_pred = set([indexes[com] for com in comb])
+            is_rc = bool(cur_pred == rc_truth)
+            res.append((value, is_rc, cur_pred))
             kk += 1
             if kk == k:
                 break
@@ -921,10 +890,10 @@ class RetroAGT(pl.LightningModule):
                     cur_comb = comb.copy()
                     cur_comb[center_idx] = i
                     heapq.heappush(stack, (-cur_value, cur_comb))
-        values = torch.tensor([r[0] for r in res]).softmax(dim=-1)
-        res = [(values[i], res[i][1]) for i in range(kk)]
+        values = torch.tensor([-idx for idx, r in enumerate(res)])
+        res = [(values[i], res[i][1], res[i][2]) for i in range(kk)]
         for i in range(kk, k + 1):
-            res.append((0., False))
+            res.append((-10000, False, []))
         return res
 
     def calc_batch_accuracy(self, batch, rc_prob, lg_prob, ct_prob, h_prob):
@@ -986,27 +955,60 @@ class RetroAGT(pl.LightningModule):
         all_acc['all_top1_acc'], rc_acc['rc_top1_acc'], lg_acc['lg_top1_acc'], ct_acc, h_acc = \
             self.calc_batch_accuracy(batch, rc_prob, lg_prob, ct_prob, h_prob)
 
-        for k in [3, 5, 10]:
+        if '50k' in self.dataset_path and 'tsplit' not in self.dataset_path and False: 
+            rxn_type = batch['rxn_type']
+            rxn_type_acc = {f"rxn_type{i}_top{k}_acc": 0 for i in range(10) for k in [0, 1, 3, 5, 10]}
+
             for idx in range(bsz):
-                if rc_pred[idx] <= k:
-                    rc_acc[f'rc_top{k}_acc'] += 1
-                if lg_pred[idx] <= k:
-                    lg_acc[f'lg_top{k}_acc'] += 1
-                if mix_pred[idx] <= k:
-                    all_acc[f"all_top{k}_acc"] += 1
+                cur_rxn_type = rxn_type[idx].int().item()
+                rxn_type_acc[f"rxn_type{cur_rxn_type}_top{0}_acc"] += 1
+                if mix_pred[idx] <= 1:
+                    rxn_type_acc[f"rxn_type{cur_rxn_type}_top{1}_acc"] += 1
+                for k in [3, 5, 10]:
+                    if rc_pred[idx] <= k:
+                        rc_acc[f'rc_top{k}_acc'] += 1
+                    if lg_pred[idx] <= k:
+                        lg_acc[f'lg_top{k}_acc'] += 1
+                    if mix_pred[idx] <= k:
+                        all_acc[f"all_top{k}_acc"] += 1
+                        rxn_type_acc[f"rxn_type{cur_rxn_type}_top{k}_acc"] += 1
 
-        for k in [3, 5, 10]:
-            rc_acc[f'rc_top{k}_acc'] /= bsz
-            lg_acc[f'lg_top{k}_acc'] /= bsz
-            all_acc[f'all_top{k}_acc'] /= bsz
+            for k in [3, 5, 10]:
+                rc_acc[f'rc_top{k}_acc'] /= bsz
+                lg_acc[f'lg_top{k}_acc'] /= bsz
+                all_acc[f'all_top{k}_acc'] /= bsz
+            for k in [1, 3, 5, 10]:
+                for i in range(10):
+                    if rxn_type_acc[f"rxn_type{i}_top{0}_acc"] > 0:
+                        rxn_type_acc[f"rxn_type{i}_top{k}_acc"] /= rxn_type_acc[f"rxn_type{i}_top{0}_acc"]
+                    else:
+                        rxn_type_acc[f"rxn_type{i}_top{k}_acc"] = None
 
-        return all_acc, rc_acc, lg_acc, ct_acc, h_acc
+        else:
+            rxn_type_acc = None
+            for k in [3, 5, 10]:
+                for idx in range(bsz):
+                    if rc_pred[idx] <= k:
+                        rc_acc[f'rc_top{k}_acc'] += 1
+                    if lg_pred[idx] <= k:
+                        lg_acc[f'lg_top{k}_acc'] += 1
+                    if mix_pred[idx] <= k:
+                        all_acc[f"all_top{k}_acc"] += 1
+            for k in [3, 5, 10]:
+                rc_acc[f'rc_top{k}_acc'] /= bsz
+                lg_acc[f'lg_top{k}_acc'] /= bsz
+                all_acc[f'all_top{k}_acc'] /= bsz
+
+        return all_acc, rc_acc, lg_acc, ct_acc, h_acc, rxn_type_acc
 
     @staticmethod
     def _avg_dicts(colls):
-        complete_dict = {key: [] for key, val in colls[0].items()}
+        complete_dict = {}
         for coll in colls:
-            [complete_dict[key].append(coll[key]) for key in complete_dict.keys()]
+            for key, val in coll.items():
+                if key not in complete_dict:
+                    complete_dict[key] = []
+                complete_dict[key].append(val)
         avg_dict = {key: sum(l) / len(l) for key, l in complete_dict.items()}
         return avg_dict
 
