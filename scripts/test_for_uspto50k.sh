@@ -1,7 +1,7 @@
 #!/bin/bash
 
 python entry.py\
-  --batch_size 256 \
+  --batch_size 1024 \
   --cuda 2 \
   --name 'predict' \
   --test \
