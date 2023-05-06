@@ -248,9 +248,7 @@ class RetroAGT(pl.LightningModule):
             }
 
         lg_dic = batch['lg']
-        # print("lg_dic['atom_fea']", lg_dic['atom_fea'].min(), lg_dic['atom_fea'].max())
-        # print("lg_dic['bond_adj']", lg_dic['bond_adj'].min(), lg_dic['bond_adj'].max())
-        # print("lg_dic['dist_adj']", lg_dic['dist_adj'].min(), lg_dic['dist_adj'].max())
+
 
         if self.num_shared_layer > 0:
             shared_atom_fea_lg, masked_adj_lg = self.emb(lg_dic['atom_fea'], lg_dic['bond_adj'], lg_dic['dist_adj'],
