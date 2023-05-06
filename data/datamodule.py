@@ -40,8 +40,8 @@ class RetroAGTDataModule(pl.LightningDataModule):
 
         self.split_names = split_names
         if num_workers is None:
-#             num_workers = len(os.sched_getaffinity(0))
-            num_workers = 32
+            num_workers = len(os.sched_getaffinity(0))
+#             num_workers = 32
         self.num_workers = num_workers
         self.batch_size = batch_size
         self.pin_memory = pin_memory
