@@ -1,7 +1,7 @@
 # RetroExplainer
-You can find our preprint [here](https://www.researchgate.net/publication/364222773_MechRetro_is_a_chemical-mechanism-driven_graph_learning_framework_for_interpretable_retrosynthesis_prediction_and_pathway_planning).
+
 # Overview
-MechRetro is a chemical-mechanism-like graph learning framework via self-adaptive joint learning for interpretable retrosynthesis prediction and pathway planning
+RetroExplainer: a chemical-mechanism-driven graph learning framework for interpretable retrosynthesis prediction and pathway planning
 ![image](framework.png)
 # Installation
 **Download the repository**
@@ -77,7 +77,7 @@ sh scripts/train_for_uspto50k_rxn_type_unknown.sh
 
 # Reproduce results
 
-At first, you can download the checkpoints [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=share_link) for reaction-type-known model and [here](https://drive.google.com/file/d/1Z5IzsCEOgO-_rgLBa0VZZvMyV36-eIOG/view?usp=share_link) for unknown model. Or you can train your own model according to the section **Model Training** . 
+At first, you can download the checkpoints [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=sharing) for reaction-type-known model and [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=sharing) for unknown model. Or you can train your own model according to the section **Model Training** . 
 
 Then, put the checkpoints under the `model_saved` folder, and run the following command:
 
