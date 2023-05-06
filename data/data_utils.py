@@ -14,21 +14,6 @@ from rdkit.Chem import rdDistGeom as molDG
 BOND_ORDER_MAP = {0: 0, 1: 1, 1.5: 2, 2: 3, 3: 4}
 
 
-# def build_multi_hop_adj(adjs, n_hop, cuda=0):
-#     """
-#     :param adjs: [n_fea_type, n_atom, n_atom]
-#     :param cuda:
-#     :param n_hop:
-#     :return: [n_hop, n_fea_type, n_atom, n_atom]
-#     """
-#     n_fea_type, n_atom, _ = adjs.size()
-#     new_adjs = torch.zeros(n_hop, n_fea_type, n_atom, n_atom, device=cuda, dtype=torch.half)
-#
-#     new_adjs[0] = adjs
-#     for hop in range(1, n_hop):
-#         for fea_idx in range(n_fea_type):
-#             new_adjs[hop, fea_idx] = torch.mm(new_adjs[hop - 1, fea_idx], new_adjs[0, fea_idx])
-#     return new_adjs.detach()
 
 
 def padding_mol_info(mol_dic, max_nodes, padding_idx=0):
@@ -153,111 +138,6 @@ def get_bond_adj(mol):
             bond_adj[i, j] = bond_adj[j, i] = bond_adj[i, j] + (1 << 5)
     return bond_adj
 
-
-# def get_tgt_adj_order_mit(product, reactants):
-#     atom_idx2map_idx = {}
-#     pro_map_ids = []
-#     for atom in product.GetAtoms():
-#         atom_idx2map_idx[atom.GetIdx()] = atom.GetAtomMapNum()
-#         pro_map_ids.append(atom.GetAtomMapNum())
-#
-#     map_idx2atom_idx = {0: []}
-#     r_atoms = list(reactants.GetAtoms())
-#     for atom in r_atoms:
-#         cur_mp_id = atom.GetAtomMapNum()
-#         if cur_mp_id not in map_idx2atom_idx.keys():
-#             map_idx2atom_idx[atom.GetAtomMapNum()] = atom.GetIdx()
-#         else:
-#             raise ValueError("Atom map id is not unique")
-#
-#     order = []
-#     for atom in product.GetAtoms():
-#         order.append(map_idx2atom_idx[atom_idx2map_idx[atom.GetIdx()]])
-#
-#     leaving_group = []
-#     for atom in r_atoms:
-#         if atom.GetAtomMapNum() > len(order):
-#             leaving_group.append(atom.GetIdx())
-#
-#     bond_list = [bond for bond in reactants.GetBonds()
-#                  if bond.GetBeginAtomIdx() in leaving_group
-#                  or bond.GetEndAtomIdx() in leaving_group]
-#
-#     def lg_atom_cmp(bond_1, bond_2):
-#         cmp_res = atom_cmp(r_atoms[bond_1[1]], r_atoms[bond_2[1]])
-#         if not cmp_res:
-#             return cmp_res
-#         return atom_cmp(r_atoms[bond_1[2]], r_atoms[bond_2[2]])
-#
-#     def reagent_atom_cmp(bond_1, bond_2):
-#         return atom_cmp(r_atoms[bond_1.GetBeginAtomIdx()], r_atoms[bond_2.GetBeginAtomIdx()]) + \
-#                atom_cmp(r_atoms[bond_1.GetEndAtomIdx()], r_atoms[bond_2.GetEndAtomIdx()])
-#
-#     def residue_atom_cmp(a1, a2):
-#         return atom_cmp(r_atoms[a1], r_atoms[a2])
-#
-#     gate_cnt, is_gate, bridge = [], True, []
-#
-#     regents = []
-#     last_length = -1
-#     is_regents = False
-#     while bond_list:
-#         rm_bond, rm_bond_idx = [], []
-#
-#         if last_length == len(bond_list):
-#             bond_list.sort(key=cmp_to_key(reagent_atom_cmp))
-#             is_regents = True
-#
-#         for bond_id, bond in enumerate(bond_list):
-#             aid1, aid2 = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-#             if aid1 in leaving_group and aid2 in leaving_group:
-#                 if last_length == len(bond_list):
-#                     last_length -= 2
-#                     if residue_atom_cmp(aid1, aid2) > 0:
-#                         aid1, aid2 = aid2, aid1
-#                 else:
-#                     continue
-#             elif aid1 in leaving_group:
-#                 aid1, aid2 = aid2, aid1
-#             rm_bond.append((bond, aid1, aid2))
-#             rm_bond_idx.append(bond_id)
-#             exist_reagent = False
-#
-#         rm_bond.sort(key=cmp_to_key(lg_atom_cmp))
-#
-#         if is_gate:
-#             gate_atoms = []
-#             for b in rm_bond:
-#                 if b[2] not in gate_atoms:
-#                     gate_atoms.append(b[2])
-#                     gate_cnt.append(1)
-#                 else:
-#                     gate_atom_idx = gate_atoms.index(b[2])
-#                     gate_cnt[gate_atom_idx] += 1
-#                 bridge.append((b[1], float(b[0].GetBondTypeAsDouble())))
-#             is_gate = False
-#
-#         last_length = len(bond_list)
-#         bond_list = [
-#             bond_list[i]
-#             for i in range(len(bond_list))
-#             if i not in rm_bond_idx
-#         ]
-#
-#         for rm_b in rm_bond:
-#             if rm_b[2] in leaving_group:
-#                 if is_regents:
-#                     regents.append(rm_b[2])
-#                 else:
-#                     order.append(rm_b[2])
-#                 leaving_group.remove(rm_b[2])
-#
-#     if leaving_group:
-#         leaving_group.sort(key=cmp_to_key(residue_atom_cmp))
-#         for leaving_group_atom in leaving_group:
-#             regents.append(leaving_group_atom)
-#
-#     return torch.tensor(order, dtype=torch.long), gate_cnt, bridge, torch.tensor(regents, dtype=torch.long)
 
 
 def get_tgt_adj_order_mit(product, reactants, reactants_smi):
