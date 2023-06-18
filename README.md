@@ -1,7 +1,7 @@
 # RetroExplainer
 
 # Overview
-RetroExplainer: a chemical-mechanism-driven graph learning framework for interpretable retrosynthesis prediction and pathway planning
+RetroExplainer: A chemical knowledge and deep-leaning guided molecular assembly approach for retrosynthesis prediction with quantitative interpretability
 ![image](framework.png)
 # Installation
 **Download the repository**
