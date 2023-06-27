@@ -1,9 +1,3 @@
-# !/usr/bin/python3
-# @File: dataset.py
-# --coding:utf-8--
-# @Author:yuwang
-# @Email:as1003208735@foxmail.com
-# @Time: 2022.03.18.21
 import os
 import pandas as pd
 import os.path as osp
@@ -11,12 +5,212 @@ from torch_geometric.data import Dataset
 from torch.utils import data
 from tqdm import tqdm
 import torch
-
+from rxnmapper import BatchedMapper
 from data.data_utils import smile_to_mol_info, get_tgt_adj_order, padding_mol_info, \
-    get_bond_order_adj, pad_adj, pad_1d, get_tgt_adj_order_mit, shuffle_map_numbers
+    get_bond_order_adj, pad_adj, pad_1d, get_tgt_adj_order_mit, shuffle_map_numbers, map_id_alignment, check_reactant
 from data.LeavingGroup import LeavingGroup
+import copy
 
 CUT_OFF = 10
+
+
+class RerankingDataset(Dataset):
+    @property
+    def raw_file_names(self):
+        return [osp.join("rxnebm_data", self.dataset + ".csv")]
+
+    @property
+    def processed_file_names(self):
+        return [f"product_{idx}.pt" for idx in range(self.size)]
+
+    @property
+    def processed_dir(self) -> str:
+        return osp.join(self.root, osp.join("processed", self.dataset))
+
+    def __init__(self, root, dataset, max_node=200, max_gate_num_size=4, min_node=3, use_3d_info=False, max_lg_na=23,
+                 lg_path="/mnt/solid/wy/retro2/data/uspto50k_2/processed/leaving_group.pt", cuda=0):
+        self.root = root
+        self.dataset = dataset
+        self.max_node = max_node
+        self.max_gate_num_size = max_gate_num_size
+        self.min_node = min_node
+        self.use_3d_info = use_3d_info
+        self.max_lg_na = max_lg_na
+        self.lg_path = lg_path
+        self.cuda = cuda
+        self.size_path = osp.join(self.root, "processed", self.dataset, "size.pt")
+        if osp.exists(self.size_path):
+            self.size = torch.load(self.size_path)
+        else:
+            self.size = 0
+        super().__init__(root)
+
+    def process(self):
+        cur_idx = 0
+        max_rxn_cnt = 10
+        leaving_group = torch.load(self.lg_path)
+
+        rxn_mapper = BatchedMapper(batch_size=200)
+        for raw_path in self.raw_paths:
+            cur_csv = pd.read_csv(raw_path)
+            cur_length = len(cur_csv)
+
+            for idx in tqdm(range(cur_length), desc="Products"):
+                reactant_smi, product_smi = cur_csv.iloc[idx]['orig_rxn_smi'].split(">>")
+                product = smile_to_mol_info(product_smi)
+                reactant = smile_to_mol_info(reactant_smi)
+
+                prediction_list = []
+                for index_precursors in range(200):
+                    cur_reactant_smi = str(cur_csv.iloc[idx][f'cand_precursor_{index_precursors + 1}'])
+                    if cur_reactant_smi != '9999':
+                        prediction_list.append(product_smi + ">>" + cur_reactant_smi)
+                    else:
+                        break
+
+                prediction_list = list(rxn_mapper.map_reactions(prediction_list))
+
+                cur_index_prediction = 0
+                for index_precursors in tqdm(range(len(prediction_list)), desc="Top_K_Predictions", leave=False):
+                    if cur_csv['rank_of_true_precursor'].iloc[idx] != index_precursors:
+                        if prediction_list[index_precursors] == ">>":
+                            continue
+                        cur_product_smi, cur_reactant_smi = prediction_list[index_precursors].split(">>")
+                        cur_reactant_smi, cur_product_smi = \
+                            map_id_alignment(cur_reactant_smi, cur_product_smi, product['mol'], return_smiles=True)
+                        cur_reactant_smi = check_reactant(cur_reactant_smi)
+                        cur_reactant = smile_to_mol_info(cur_reactant_smi)
+                    else:
+                        cur_reactant = copy.deepcopy(reactant)
+                        cur_product_smi, cur_reactant_smi = product_smi, reactant_smi
+
+                    cur_product = copy.deepcopy(product)
+
+                    try:
+                        order, gate_num, bridge = get_tgt_adj_order(cur_product['mol'], cur_reactant['mol'])
+                    except (ValueError, KeyError) as e:
+                        # print(e)
+                        continue
+
+                    cur_reactant['atom_fea'] = cur_reactant['atom_fea'][:, order]
+                    cur_reactant['bond_adj'] = cur_reactant['bond_adj'][order, :][:, order]
+                    cur_reactant['dist_adj'] = cur_reactant['dist_adj'][order, :][:, order]
+
+                    n_pro, n_rea = cur_product['n_atom'], cur_reactant['n_atom']
+
+                    pro_bond_adj = get_bond_order_adj(cur_product['mol'])
+                    rea_bond_adj = get_bond_order_adj(cur_reactant['mol'])[order][:, order]
+                    rc_target = torch.zeros_like(pro_bond_adj)
+                    rc_target[:n_pro, :n_pro] = rea_bond_adj[:n_pro, :n_pro]
+
+                    rc_target = (~torch.eq(rc_target, pro_bond_adj))
+                    center = rc_target.nonzero()
+                    center_cnt = center.size(0) // 2
+
+                    if center_cnt >= CUT_OFF:
+                        continue
+
+                    center_sparse = torch.zeros(2, 10) - 1
+
+                    n_lg = n_rea - n_pro
+                    if n_lg >= self.max_lg_na:
+                        continue
+
+                    if len(gate_num) >= self.max_gate_num_size:
+                        continue
+
+                    lg_dict = {"atom_fea": cur_reactant['atom_fea'][:, n_pro:].clone(),
+                               "bond_adj": cur_reactant['bond_adj'][n_pro:, n_pro:],
+                               'dist_adj': cur_reactant['dist_adj'][n_pro:, n_pro:],
+                               'n_atom': n_lg}
+                    # lg_dict['bond_adj'] = build_multi_hop_adj(lg_dict['bond_adj'], n_hop=4)
+                    # lg_dict['atom_fea'][-1] = 0
+
+                    # print(n_rea, n_pro, len(regents_idx), n_lg, lg_dict['atom_fea'].size(1))
+                    # print(n_lg, lg_dict['atom_fea'][:, :n_lg].size(1))
+                    assert n_lg == lg_dict['atom_fea'][:, :n_lg].size(1)
+                    cur_lg = LeavingGroup(na=n_lg,
+                                          atom_fea=lg_dict['atom_fea'][:, :n_lg],
+                                          bond_adj=lg_dict['bond_adj'][:n_lg, :n_lg] + 1,
+                                          gate_num=gate_num,
+                                          center_cnt=[center_cnt],
+                                          rxn_type=[0],
+                                          bridge=[bridge],
+                                          dist_adj=lg_dict['dist_adj'][:n_lg, :n_lg],
+                                          )
+
+                    if cur_lg not in leaving_group:
+                        lg_id = -1
+                        # lg_id = len(leaving_group)
+                        # leaving_group.append(cur_lg)
+                    else:
+                        lg_id = leaving_group.index(cur_lg)
+                        leaving_group[lg_id].n += 1
+                        if bridge not in leaving_group[lg_id].bridge:
+                            leaving_group[lg_id].bridge.append(bridge)
+                        if center_cnt not in leaving_group[lg_id].center_cnt:
+                            leaving_group[lg_id].center_cnt.append(center_cnt)
+
+                    # product['bond_adj'] = build_multi_hop_adj(product['bond_adj'], n_hop=4)
+                    # padding
+                    padding_mol_info(lg_dict, self.max_lg_na)
+                    padding_mol_info(cur_product, self.max_node)
+                    # rea_bond_adj = pad_adj(rea_bond_adj, self.max_node)
+                    # rc_target = pad_adj(rc_target, self.max_node)
+                    # rc_target_atom = pad_1d(rc_target_atom, self.max_node)
+
+                    rc_h = torch.zeros(self.max_node) + 3
+                    rc_h[:n_pro] = cur_reactant['atom_fea'][3, :n_pro] - cur_product['atom_fea'][3, :n_pro] + 3
+                    if rc_h.max() > 6 or rc_h.min() < 0:
+                        continue
+
+                    gate_token = torch.zeros(self.max_lg_na, dtype=torch.long)
+                    gate_token[:len(gate_num)] = torch.tensor(gate_num)
+
+                    ct_target = torch.zeros(n_pro, self.max_gate_num_size, dtype=torch.long)
+                    for i in range(len(gate_num)):
+                        ct_target[:n_pro, i] = torch.where(rea_bond_adj[n_pro + i, :n_pro] > 0, 1, 0)
+
+                    del cur_reactant
+                    prediction = {
+                        'lg': lg_dict,
+                        'rc_h': rc_h.long(),
+                        'rea_bond_adj': rea_bond_adj,
+                        'rc_target': rc_target,
+                        # 'center': center_sparse,
+                        'ct_target': ct_target.float(),
+                        'gate_token': gate_token.long(),
+                        'center_cnt': center_cnt,
+                        "lg_id": torch.LongTensor([lg_id]).squeeze(),
+                    }
+
+                    torch.save(prediction, osp.join(self.processed_dir,
+                                                    f"product_{cur_idx}_p_{index_precursors}.pt"))
+                    cur_index_prediction += 1
+
+                padding_mol_info(product, self.max_node)
+                del product['mol']
+                rxn_data = {
+                    "product": product,
+                    "prediction_size": len(prediction_list),
+                    "origin_rank": cur_csv['rank_of_true_precursor'].iloc[idx],
+                    "origin_idx": idx,
+                    "rxn_type": 0,
+                }
+                torch.save(rxn_data, osp.join(self.processed_dir, f"product_{cur_idx}.pt"))
+                cur_idx += 1
+            self.size = cur_idx
+            torch.save(self.size, self.size_path)
+
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, idx):
+        return torch.load(osp.join(self.processed_dir, f"product_{idx}.pt"))
+
+    def get_predictions(self, idx, end_idx):
+        return [(torch.load(osp.join(self.processed_dir, f"product_{idx}_p_{i}.pt")), i)
+                for i in range(end_idx) if osp.exists(osp.join(self.processed_dir, f"product_{idx}_p_{i}.pt"))]
 
 
 class MultiStepDataset(data.Dataset):
@@ -65,8 +259,8 @@ class RetroAGTDataSet(Dataset):
     def processed_dir(self) -> str:
         return osp.join(self.root, osp.join("processed", self.data_split))
 
-    def __init__(self, root, data_split, fast_read=True, max_node=50, max_gate_num_size=4, max_regents_na=0,
-            min_node=3, use_3d_info=False, max_lg_na=30, save_cache=True, dataset_type='50k', known_regents=False):
+    def __init__(self, root, data_split, fast_read=True, max_node=200, max_gate_num_size=10, max_regents_na=0,
+                 min_node=3, use_3d_info=False, max_lg_na=50, save_cache=True, dataset_type='50k', known_regents=False):
         self.root = root
         self.lg_path = osp.join(root, osp.join('processed', 'leaving_group.pt'))
         # self.rxn_center_path = osp.join(root, osp.join('processed', 'rxn_center.pt'))
@@ -132,8 +326,11 @@ class RetroAGTDataSet(Dataset):
                 if idx < last_id:
                     count['idx < last_id'] += 1
                     continue
-                if self.need_shuffle_mapped_atom:  # some datasets like uspto50k need to shuffle the map numbers to avid the possible leakage
-                    reactant_smiles, product_smiles = shuffle_map_numbers(reactant_smiles, product_smiles)
+                if self.need_reshuffle_mapped_atom:
+                    # some datasets like uspto50k need to shuffle the map numbers to avid the possible leakage
+                    reactant_smiles, product_smiles = \
+                        map_id_alignment(reactant_smiles, product_smiles, return_smiles=True)
+
                 rxn_type = rxn_list[idx] if rxn_list is not None else 0
                 product = smile_to_mol_info(product_smiles, use_3d_info=self.use_3d_info)
                 if self.use_3d_info and product['dist_adj_3d'] is None:
@@ -197,7 +394,7 @@ class RetroAGTDataSet(Dataset):
                 center = rc_target.nonzero()
                 center_cnt = center.size(0) // 2
                 # center = torch.stack([c for c in center if c[0] < c[1]]) if center_cnt > 0 else torch.zeros(2, 2) - 1
-                rc_atoms = torch.zeros(self.max_node)
+                # rc_atoms = torch.zeros(self.max_node)
 
                 if center_cnt > CUT_OFF:
                     count['center_cnt'] += 1
@@ -250,7 +447,7 @@ class RetroAGTDataSet(Dataset):
                     if center_cnt not in leaving_group[lg_id].center_cnt:
                         leaving_group[lg_id].center_cnt.append(center_cnt)
 
-#                 product['bond_adj'] = build_multi_hop_adj(product['bond_adj'], n_hop=4)
+                # product['bond_adj'] = build_multi_hop_adj(product['bond_adj'], n_hop=4)
                 # padding
                 padding_mol_info(product, self.max_node + self.max_regents_na)
                 rea_bond_adj = pad_adj(rea_bond_adj, self.max_node + self.max_regents_na)
@@ -311,64 +508,3 @@ class RetroAGTDataSet(Dataset):
         else:
             rxn_data = torch.load(osp.join(self.processed_dir, f"rxn_data_{idx}.pt"))
         return rxn_data
-
-def map_id_alignment(reactant_smiles, product_smiles, product=None, return_smiles=True):
-    """
-    if product is None, update product mapping numbers according to canonical atom order (for USPTO-50K)
-    else, update product mapping numbers according to the reference product (for re-ranking dataset)
-    :param reactant_smiles:
-    :param product_smiles:
-    :param product:
-    :param return_smiles:
-    :return:
-    """
-
-    index2mapnums = {}
-    cur_product = Chem.MolFromSmiles(product_smiles)
-    for atom in cur_product.GetAtoms():
-        index2mapnums[atom.GetIdx()] = atom.GetAtomMapNum()
-
-    if isinstance(product, str):
-        mol_cano = Chem.MolFromSmiles(product)
-
-    elif product is None:
-        mol_cano = Chem.RWMol(mol)
-        [atom.SetAtomMapNum(0) for atom in mol_cano.GetAtoms()]
-        smi_cano = Chem.MolToSmiles(mol_cano)
-        mol_cano = Chem.MolFromSmiles(smi_cano)
-
-    else:
-        mol_cano = Chem.RWMol(product)
-
-    matches = cur_product.GetSubstructMatches(mol_cano)
-    # print(matches)
-    if matches:
-        mapnums_old2new = {}
-        for atom, mat in zip(mol_cano.GetAtoms(), matches[0]):
-            if product is None:
-                # update product mapping numbers according to canonical atom order
-                # to completely remove potential information leak
-                mapnums_old2new[index2mapnums[mat]] = 1 + atom.GetIdx()
-                atom.SetAtomMapNum(1 + atom.GetIdx())
-            else:
-                mapnums_old2new[index2mapnums[mat]] = atom.GetAtomMapNum()
-        new_product = mol_cano
-        # update reactant mapping numbers accordingly
-
-        new_reactant = Chem.MolFromSmiles(reactant_smiles)
-        for atom in new_reactant.GetAtoms():
-            if atom.GetAtomMapNum() in mapnums_old2new.keys():
-                atom.SetAtomMapNum(mapnums_old2new[atom.GetAtomMapNum()])
-            else:
-                atom.SetAtomMapNum(0)
-
-        if product is not None:
-            assert Chem.MolToSmiles(new_product) == Chem.MolToSmiles(product), \
-                f"reactant_smiles:{reactant_smiles}, product_smiles:{product_smiles}, " \
-                f"product:{Chem.MolToSmiles(product)}, new_product:{new_product}, " \
-                f"new_reactant:{Chem.MolToSmiles(new_reactant)}"
-
-        if return_smiles:
-            return Chem.MolToSmiles(new_reactant), Chem.MolToSmiles(new_product)
-        else:
-            return new_reactant, new_product
