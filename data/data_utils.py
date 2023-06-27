@@ -375,3 +375,66 @@ def pad_adj(x, n_max_nodes):
     new_x = torch.zeros([n_max_nodes, n_max_nodes], dtype=x.dtype)
     new_x[:n, :n] = x
     return new_x
+
+
+
+def map_id_alignment(reactant_smiles, product_smiles, product=None, return_smiles=True):
+    """
+    if product is None, update product mapping numbers according to canonical atom order (for USPTO-50K)
+    else, update product mapping numbers according to the reference product (for re-ranking dataset)
+    :param reactant_smiles:
+    :param product_smiles:
+    :param product:
+    :param return_smiles:
+    :return:
+    """
+
+    index2mapnums = {}
+    cur_product = Chem.MolFromSmiles(product_smiles)
+    for atom in cur_product.GetAtoms():
+        index2mapnums[atom.GetIdx()] = atom.GetAtomMapNum()
+
+    if isinstance(product, str):
+        mol_cano = Chem.MolFromSmiles(product)
+
+    elif product is None:
+        mol_cano = Chem.RWMol(mol)
+        [atom.SetAtomMapNum(0) for atom in mol_cano.GetAtoms()]
+        smi_cano = Chem.MolToSmiles(mol_cano)
+        mol_cano = Chem.MolFromSmiles(smi_cano)
+
+    else:
+        mol_cano = Chem.RWMol(product)
+
+    matches = cur_product.GetSubstructMatches(mol_cano)
+    # print(matches)
+    if matches:
+        mapnums_old2new = {}
+        for atom, mat in zip(mol_cano.GetAtoms(), matches[0]):
+            if product is None:
+                # update product mapping numbers according to canonical atom order
+                # to completely remove potential information leak
+                mapnums_old2new[index2mapnums[mat]] = 1 + atom.GetIdx()
+                atom.SetAtomMapNum(1 + atom.GetIdx())
+            else:
+                mapnums_old2new[index2mapnums[mat]] = atom.GetAtomMapNum()
+        new_product = mol_cano
+        # update reactant mapping numbers accordingly
+
+        new_reactant = Chem.MolFromSmiles(reactant_smiles)
+        for atom in new_reactant.GetAtoms():
+            if atom.GetAtomMapNum() in mapnums_old2new.keys():
+                atom.SetAtomMapNum(mapnums_old2new[atom.GetAtomMapNum()])
+            else:
+                atom.SetAtomMapNum(0)
+
+        if product is not None:
+            assert Chem.MolToSmiles(new_product) == Chem.MolToSmiles(product), \
+                f"reactant_smiles:{reactant_smiles}, product_smiles:{product_smiles}, " \
+                f"product:{Chem.MolToSmiles(product)}, new_product:{new_product}, " \
+                f"new_reactant:{Chem.MolToSmiles(new_reactant)}"
+
+        if return_smiles:
+            return Chem.MolToSmiles(new_reactant), Chem.MolToSmiles(new_product)
+        else:
+            return new_reactant, new_product
