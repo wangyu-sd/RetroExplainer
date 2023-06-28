@@ -1,9 +1,12 @@
 # RetroExplainer
 
 # Overview
+
 RetroExplainer: A chemical knowledge guided deep-learning framework for retrosynthesis prediction with molecular assembly reasoning and quantitative interpretability
 ![image](framework.png)
+
 # Installation
+
 **Download the repository**
 
 ```shell
@@ -59,7 +62,7 @@ Other packages can be easily installed by calling `pip install xxx` command.
 
 # Model Training
 
-The `USPTO50K`  datasets can be download [here](https://drive.google.com/file/d/12WnLFJ6LSVj6Z47ZTREEpMXAOKTNAjJe/view?usp=share_link) , and should be put under the folders `/data` .
+The `USPTO-50K`  datasets can be download [here](https://drive.google.com/file/d/12WnLFJ6LSVj6Z47ZTREEpMXAOKTNAjJe/view?usp=share_link) , and should be put under the folders `/data` .
 
 You can run the training stages by following command for reaction type known conditions:
 
@@ -73,11 +76,24 @@ And for reaction type unknown:
 sh scripts/train_for_uspto50k_rxn_type_unknown.sh
 ```
 
- As for your own datasets, you can put them into the `data/your_datasets/raw` , and set the argument to `data/your_datasets ` .
+As for additional datasets, e.g.,   `USPTO-50K` using t-split method, `USPTO-FULL`, `USPTO-MIT` , and your customized datasets own datasets, you can put them in the directory `data/your_datasets/raw` , and set the argument to `data/your_datasets ` .
+
+The above mentioned dataset also can be obtained in the following entries:
+
++ `USPTO-50K` (random split): https://github.com/Hanjun-Dai/GLN ,
++ `USPTO-50K` (Using t-split method): https://drive.google.com/file/d/1_cko4Wym0W_UaRp74KvbEJCrfQBfrVKQ/view?usp=sharing
++ `USPTO-MIT` : https://github.com/wengong-jin/nips17-rexgen/blob/master/USPTO/data.zip,
++ `USPTO-FULL`: https://github.com/Hanjun-Dai/GLN.
+
+# Re-ranking
+
+The data correspond to re-ranking experiments can be found in https://drive.google.com/file/d/1SMK1P2IXcWh0T2KHxresxu6_dKkgA7jd/view?usp=sharing.
 
 # Reproduce results
 
-At first, you can download the checkpoints [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=sharing) for reaction-type-known model and [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=sharing) for unknown model. Or you can train your own model according to the section **Model Training** . 
+## Model performance
+
+At first, you can download the checkpoints [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=sharing) for reaction-type-known model (`USPTO-50K`) and [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=sharing) for unknown model. Or you can train your own model according to the section **Model Training** . 
 
 Then, put the checkpoints under the `model_saved` folder, and run the following command:
 
@@ -90,6 +106,37 @@ Similarly, for reaction type unknown conditions, you can:
 ```shell
 sh scripts/test_for_uspto50k_rxn_type_unknown.sh
 ```
+
+Other check points can be found in the following URLs and the reproduction can be easily run upon modifying the corresponding commands of the scripts.
+
++ `USPTO-50K` (Using t-split method): https://drive.google.com/file/d/1_cko4Wym0W_UaRp74HJHUSrVKQ/view?usp=drive_link
++ `USPTO-MIT` : Upon uploading...
++ `USPTO-FULL`: Upon uploading...
+
+## Re-ranking ability
+
+Checkpoint of re-ranking model can be downloaded here: https://drive.google.com/file/d/1a7loRClJtF2t8Vd-4wN_-2HqM_wCvI18/view?usp=sharing.
+
+The results can be reproduced through the following commands:
+
+```shell
+python reranking_and_explaining.py \
+  --batch_size 64 \
+  --cuda 2 \
+  --dataset GLN_200topk_200maxk_noGT_77777777_test
+```
+
+
+
+# Interpretability
+
+We introduced an energy-based molecular assembly process that offers transparent decision-making and interpretable retrosynthesis predictions. This process can generate an energy decision curve that breaks down predictions into multiple stages and allows substructure-level attributions; the former can help understand the "counterfactual" predictions to discover potential biases in the dataset, and the latter can provide more granular references (such as the confidence of a certain chemical bond being broken) to inspire researchers to design customized reactants.
+
+![image](explainability.jpg)
+
+**Generated explanations through chemical-mechanism-like decision process. a.** The decision process of two predictions, including reactions with and without leaving groups. **b.** The decision curve of top-12 predictions by RetroExplainer. The same reaction patterns have the same energy change. **c-h**. Nine representative instances for substructure attributions, which allows a granular insight. **i-k**. Performance on re-ranking results compared with three effective retrosynthesis models.
+
+
 
 # Interpretable Multi-Step Planing
 
