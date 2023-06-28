@@ -1,7 +1,7 @@
 # RetroExplainer
 
 # Overview
-RetroExplainer: A chemical knowledge and deep-leaning guided molecular assembly approach for retrosynthesis prediction with quantitative interpretability
+RetroExplainer: A chemical knowledge guided deep-learning framework for retrosynthesis prediction with molecular assembly reasoning and quantitative interpretability
 ![image](framework.png)
 # Installation
 **Download the repository**
