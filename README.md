@@ -7,8 +7,8 @@ RetroExplainer: A chemical knowledge guided deep-learning framework for retrosyn
 **Download the repository**
 
 ```shell
-git clone git@github.com:wy-sdu/MechRetro.git
-cd MechRetro
+git clone git@github.com:wangyu-sd/RetroExplainer
+cd RetroExplainer
 ```
 
 **Install required packages**
@@ -27,8 +27,8 @@ If the previous commands don't work, you can install the packages separately:
 1. Create a new virtual environment with a 3.7.13 version of python:
 
    ```sh
-   conda create -n mechretro python=3.7.13
-   conda activate mechretro
+   conda create -n RetroExplainer python=3.7.13
+   conda activate RetroExplainer
    ```
 
 2. Install `pytroch` with correct CUDA version. To find your suitable version, see https://pytorch.org/get-started/locally/
