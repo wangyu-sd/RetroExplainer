@@ -110,8 +110,8 @@ sh scripts/test_for_uspto50k_rxn_type_unknown.sh
 Other check points can be found in the following URLs and the reproduction can be easily run upon modifying the corresponding commands of the scripts.
 
 + `USPTO-50K` (Using t-split method): https://drive.google.com/file/d/1_cko4Wym0W_UaRp74HJHUSrVKQ/view?usp=drive_link
-+ `USPTO-MIT` : Upon uploading...
-+ `USPTO-FULL`: Upon uploading...
++ `USPTO-MIT` : https://drive.google.com/file/d/1lSy1zbrzMgQypEft5f9_4s3nvWbL5mx7/view?usp=sharing
++ `USPTO-FULL`: https://drive.google.com/file/d/1iV40xTstPHSRCzNiYLXX_zird1I1Q6tN/view?usp=sharing 
 
 ## Re-ranking ability
 
