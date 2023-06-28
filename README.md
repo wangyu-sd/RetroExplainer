@@ -134,7 +134,7 @@ We introduced an energy-based molecular assembly process that offers transparent
 
 ![image](explainability.jpg)
 
-**Generated explanations through chemical-mechanism-like decision process. a.** The decision process of two predictions, including reactions with and without leaving groups. **b.** The decision curve of top-12 predictions by RetroExplainer. The same reaction patterns have the same energy change. **c-h**. Nine representative instances for substructure attributions, which allows a granular insight. **i-k**. Performance on re-ranking results compared with three effective retrosynthesis models.
+**Generated explanations through molecular assembly process decision process. a.** The decision process of two predictions, including reactions with and without leaving groups. **b.** The decision curve of top-12 predictions by RetroExplainer. The same reaction patterns have the same energy change. **c-h**. Nine representative instances for substructure attributions, which allows a granular insight. **i-k**. Performance on re-ranking results compared with three effective retrosynthesis models.
 
 
 
