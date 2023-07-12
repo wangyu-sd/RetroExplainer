@@ -27,10 +27,10 @@ def main():
     # dataset configuration
     parser.add_argument('--dataset', type=str, default="GLN_200topk_200maxk_noGT_19260817_test")
     parser.add_argument('--model_path', type=str,
-                        default='tb_logs/retro2/version_41/checkpoints/epoch=374-step=29250.ckpt')
+                        default='your_dir/checkpoints/epoch=374-step=29250.ckpt')
     parser.add_argument('--not_fast_read', default=False, action='store_true')
     parser.add_argument('--lg_path', type=str,
-                        default='/mnt/solid/wy/retro2/data/uspto50k_2/processed/leaving_group.pt')
+                        default='your_dir/processed/leaving_group.pt')
     parser.add_argument('--num_workers', type=int, default=16)
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--cuda', type=int, default=1)
