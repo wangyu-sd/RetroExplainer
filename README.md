@@ -1,5 +1,5 @@
 # RetroExplainer
-
+[![DOI](https://zenodo.org/badge/543984477.svg)](https://zenodo.org/badge/latestdoi/543984477)
 # Overview
 
 RetroExplainer: A chemical knowledge guided deep-learning framework for retrosynthesis prediction with molecular assembly reasoning and quantitative interpretability
