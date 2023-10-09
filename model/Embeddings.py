@@ -31,7 +31,7 @@ class RetroAGTEmbeddingLayer(nn.Module):
 
 
 class AtomFeaEmbedding(nn.Module):
-    def __init__(self, d_model, atom_dim=65, total_degree=10, formal_charge=8, hybrid=5, exp_valance=8,
+    def __init__(self, d_model, atom_dim=65, total_degree=20, formal_charge=8, hybrid=10, exp_valance=8,
                  hydrogen=8, aromatic=2, ring=9, n_layers=1, need_graph_token=True, known_rxn_type=True,
                  known_rxn_cnt=True, n_rxn_cnt=10):
         super(AtomFeaEmbedding, self).__init__()
@@ -39,12 +39,14 @@ class AtomFeaEmbedding(nn.Module):
         self.known_rxn_type = known_rxn_type
 
         self.atom_encoders = nn.ModuleList([
-            nn.Embedding(atom_dim + 1, d_model, padding_idx=0),
-            nn.Embedding(total_degree + 1, d_model, padding_idx=0),
-            nn.Embedding(hybrid + 1, d_model, padding_idx=0),
-            nn.Embedding(hydrogen + 1, d_model, padding_idx=0),
-            nn.Embedding(aromatic + 1, d_model, padding_idx=0),
-            nn.Embedding(ring + 1, d_model, padding_idx=0),
+            nn.Embedding(atom_dim + 1, d_model, padding_idx=0),  # 65
+            nn.Embedding(total_degree + 1, d_model, padding_idx=0),  # 20
+            nn.Embedding(hybrid + 1, d_model, padding_idx=0),  # 10
+            nn.Embedding(hydrogen + 1, d_model, padding_idx=0),  # 10
+            nn.Embedding(aromatic + 1, d_model, padding_idx=0),  # 2
+            nn.Embedding(ring + 1, d_model, padding_idx=0),  # 9
+            nn.Embedding(30, d_model, padding_idx=0),
+            nn.Embedding(5, d_model, padding_idx=0),
             GaussianAtomLayer(d_model, means=(-1, 1), stds=(0.1, 10))
         ])
         self.need_graph_token = need_graph_token
@@ -71,7 +73,8 @@ class AtomFeaEmbedding(nn.Module):
         out = self.atom_encoders[-1](atom_fea[:, -1])
 
         for idx in range(n_fea_type - 1):
-            # print(self.atom_encoders[idx].weight.size(), atom_fea[:, idx].max(dim=0))
+            # print(idx, atom_fea[:, idx].max().item())
+            # print(idx, self.atom_encoders[idx].weight.size()[0], atom_fea[:, idx].max().int().item())
             out += self.atom_encoders[idx](atom_fea[:, idx].int())
 
         if self.need_graph_token:
@@ -118,7 +121,7 @@ class EdgeEmbedding(nn.Module):
         # self.hop_distribution = [1 << i for i in range(int(math.log2(n_head) - 1), -1, -1)]
         # self.hop_distribution[-1] += 1
         # assert sum(self.hop_distribution) == self.num_heads
-
+        self.max_paths = max_paths
         self.head_dim = embed_dim // n_head
         assert self.head_dim * n_head == self.embed_dim, "embed_dim must be divisible by num_heads"
 
@@ -162,12 +165,11 @@ class EdgeEmbedding(nn.Module):
         # ], dim=1)  # [bsz, n_hop, n_type, n_atom, n_atom] -> # [bsz, n_head, n_atom, n_atom]
 
         bsz, n_atom, _ = bond_adj.size()
-        comb_embed = torch.zeros(bsz, n_atom, n_atom, self.num_heads, device=bond_adj.device)
+        comb_embed = 0
         if self.use_dist_adj and dist_adj is not None:
             comb_embed += self.spatial_encoder(dist_adj)
         if self.use_3d_info and dist3d_adj is not None:
             comb_embed += self.spatial3d_encoder(dist3d_adj)
-
 
         if self.max_single_hop > 0:
             for i in range(self.n_graph_type):
@@ -177,8 +179,10 @@ class EdgeEmbedding(nn.Module):
                 base_hop_embed = j_hop_embed
                 comb_embed += self.edge_encoders[i](j_hop_embed.int())
                 for j in range(1, self.max_single_hop):
-                    # generate multi atom environment embedding
+                    # # generate multi atom environment embedding
+                    # j_hop_embed = torch.einsum('bnm,bjk->bnk', j_hop_embed, base_hop_embed)
                     j_hop_embed = torch.bmm(j_hop_embed, base_hop_embed)
+                    j_hop_embed = self.max_paths - torch.relu(self.max_paths - j_hop_embed)
                     comb_embed += self.edge_encoders[i](j_hop_embed.int())
 
         comb_embed = comb_embed.permute(0, 3, 1, 2)
