@@ -498,8 +498,8 @@ class RetroAGT(pl.LightningModule):
             origin_numhs.append(atom.GetTotalNumHs())
 
         num_lg_consider = ct_probs.size(0)
-        from tqdm import tqdm
-        for kk in tqdm(range(start_k, start_k + num_lg_consider)):
+        # from tqdm import tqdm
+        for kk in range(start_k, start_k + num_lg_consider):
             base_score = rc_score_init.clone()
             cur_lg = self.lg[lg_prob_indices[kk]]
             cur_pro = copy.deepcopy(product)
