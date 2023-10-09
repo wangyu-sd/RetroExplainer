@@ -116,7 +116,7 @@ def check_valency(mol):
 
 def prepare_single_step_model(ckpt):
     # logging.info('Loading trained model from %s' % ckpt)
-    single_step_model = RetroAGT.load_from_checkpoint(ckpt, strict=True)
+    single_step_model = RetroAGT.load_from_checkpoint(ckpt, strict=False)
     single_step_model.eval()
     single_step_model.state = 'inference'
     return single_step_model
