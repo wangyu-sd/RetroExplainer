@@ -93,7 +93,7 @@ The data correspond to re-ranking experiments can be found in https://drive.goog
 
 ## Model performance
 
-At first, you can download the checkpoints [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=sharing) for reaction-type-known model (`USPTO-50K`) and [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=sharing) for unknown model. Or you can train your own model according to the section **Model Training** . 
+At first, you can download the checkpoints [here](https://drive.google.com/file/d/1GgYO8SjKonlkUKhsthp2R8wo2onc0SMI/view?usp=sharing) for reaction-type-known model (`USPTO-50K`) and [here](https://drive.google.com/file/d/1Z5IzsCEOgO-_rgLBa0VZZvMyV36-eIOG/view?usp=sharing) for unknown model. Or you can train your own model according to the section **Model Training** . 
 
 Then, put the checkpoints under the `model_saved` folder, and run the following command:
 
