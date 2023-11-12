@@ -376,7 +376,12 @@ def pad_adj(x, n_max_nodes):
     new_x[:n, :n] = x
     return new_x
 
-
+def check_reactant(smi):
+    new_smi = []
+    for sub_smi in smi.split("."):
+        if ":" in sub_smi:
+            new_smi.append(sub_smi)
+    return ".".join(new_smi)
 
 def map_id_alignment(reactant_smiles, product_smiles, product=None, return_smiles=True):
     """
