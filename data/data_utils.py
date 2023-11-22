@@ -403,7 +403,7 @@ def map_id_alignment(reactant_smiles, product_smiles, product=None, return_smile
         mol_cano = Chem.MolFromSmiles(product)
 
     elif product is None:
-        mol_cano = Chem.RWMol(mol)
+        mol_cano = Chem.RWMol(cur_product)
         [atom.SetAtomMapNum(0) for atom in mol_cano.GetAtoms()]
         smi_cano = Chem.MolToSmiles(mol_cano)
         mol_cano = Chem.MolFromSmiles(smi_cano)
